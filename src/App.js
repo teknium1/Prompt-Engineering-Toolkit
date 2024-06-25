@@ -17,9 +17,10 @@ function App() {
       provider: 'openai', 
       model: 'gpt-3.5-turbo', 
       temperature: 0.7, 
+      maxTokens: 1000,
       apiKey: '', 
       endpoint: 'https://api.openai.com/v1/chat/completions',
-      prompts: [{ id: Date.now(), text: '', output: '' }]
+      prompts: [{ id: Date.now(), systemPrompt: '', userPrompt: '', output: '' }]
     }
   ]);
   const [variables, setVariables] = useState([]);
@@ -34,7 +35,8 @@ function App() {
   const [promptNameToSave, setPromptNameToSave] = useState('');
   const [modelToSave, setModelToSave] = useState(null);
   const [promptToSave, setPromptToSave] = useState(null);
-  const [globalPrompt, setGlobalPrompt] = useState('');
+  const [globalSystemPrompt, setGlobalSystemPrompt] = useState('');
+  const [globalUserPrompt, setGlobalUserPrompt] = useState('');
   const [useGlobalPrompt, setUseGlobalPrompt] = useState(false);
 
   useEffect(() => {
@@ -72,9 +74,10 @@ function App() {
       provider: 'openai', 
       model: 'gpt-3.5-turbo', 
       temperature: 0.7, 
+      maxTokens: 1000,
       apiKey: '', 
       endpoint: 'https://api.openai.com/v1/chat/completions',
-      prompts: [{ id: Date.now(), text: '', output: '' }]
+      prompts: [{ id: Date.now(), systemPrompt: '', userPrompt: '', output: '' }]
     };
     setModelConfigs([...modelConfigs, newModel]);
   };
@@ -89,7 +92,7 @@ function App() {
       if (config.id === modelId) {
         return {
           ...config,
-          prompts: [...config.prompts, { id: Date.now(), text: '', output: '' }]
+          prompts: [...config.prompts, { id: Date.now(), systemPrompt: '', userPrompt: '', output: '' }]
         };
       }
       return config;
@@ -97,13 +100,13 @@ function App() {
     setModelConfigs(newConfigs);
   };
 
-  const handlePromptChange = (modelId, promptId, value) => {
+  const handlePromptChange = (modelId, promptId, field, value) => {
     const newConfigs = modelConfigs.map(config => {
       if (config.id === modelId) {
         return {
           ...config,
           prompts: config.prompts.map(prompt => 
-            prompt.id === promptId ? {...prompt, text: value} : prompt
+            prompt.id === promptId ? {...prompt, [field]: value} : prompt
           )
         };
       }
@@ -135,12 +138,12 @@ function App() {
     if (promptNameToSave) {
       let promptContent;
       if (useGlobalPrompt) {
-        promptContent = globalPrompt;
+        promptContent = { systemPrompt: globalSystemPrompt, userPrompt: globalUserPrompt };
       } else if (promptToSave) {
         const { modelId, promptId } = promptToSave;
         const model = modelConfigs.find(m => m.id === modelId);
         const prompt = model.prompts.find(p => p.id === promptId);
-        promptContent = prompt.text;
+        promptContent = { systemPrompt: prompt.systemPrompt, userPrompt: prompt.userPrompt };
       }
       const newSavedPrompts = [...savedPrompts, { name: promptNameToSave, content: promptContent }];
       setSavedPrompts(newSavedPrompts);
@@ -151,11 +154,16 @@ function App() {
 
   const loadPrompt = (savedPrompt) => {
     if (useGlobalPrompt) {
-      setGlobalPrompt(savedPrompt.content);
+      setGlobalSystemPrompt(savedPrompt.content.systemPrompt);
+      setGlobalUserPrompt(savedPrompt.content.userPrompt);
     } else {
       const newConfigs = modelConfigs.map(config => ({
         ...config,
-        prompts: config.prompts.map(prompt => ({ ...prompt, text: savedPrompt.content }))
+        prompts: config.prompts.map(prompt => ({ 
+          ...prompt, 
+          systemPrompt: savedPrompt.content.systemPrompt,
+          userPrompt: savedPrompt.content.userPrompt 
+        }))
       }));
       setModelConfigs(newConfigs);
     }
@@ -228,10 +236,6 @@ function App() {
     localStorage.setItem('savedVariables', JSON.stringify(newSavedVariables));
   };
 
-  const handleGlobalPromptChange = (event) => {
-    setGlobalPrompt(event.target.value);
-  };
-
   const toggleGlobalPrompt = () => {
     setUseGlobalPrompt(!useGlobalPrompt);
   };
@@ -239,10 +243,12 @@ function App() {
   const runPrompt = async (modelId, promptId) => {
     const model = modelConfigs.find(m => m.id === modelId);
     const prompt = model.prompts.find(p => p.id === promptId);
-    let processedPrompt = useGlobalPrompt ? globalPrompt : prompt.text;
+    let processedSystemPrompt = useGlobalPrompt ? globalSystemPrompt : prompt.systemPrompt;
+    let processedUserPrompt = useGlobalPrompt ? globalUserPrompt : prompt.userPrompt;
     variables.forEach(v => {
       const regex = new RegExp(`\\{${v.name}\\}`, 'g');
-      processedPrompt = processedPrompt.replace(regex, v.value);
+      processedSystemPrompt = processedSystemPrompt.replace(regex, v.value);
+      processedUserPrompt = processedUserPrompt.replace(regex, v.value);
     });
 
     try {
@@ -250,8 +256,12 @@ function App() {
       if (model.provider === 'openai') {
         response = await axios.post(model.endpoint, {
           model: model.model,
-          messages: [{ role: 'user', content: processedPrompt }],
+          messages: [
+            { role: 'system', content: processedSystemPrompt },
+            { role: 'user', content: processedUserPrompt }
+          ],
           temperature: model.temperature,
+          max_tokens: model.maxTokens,
         }, {
           headers: { 'Authorization': `Bearer ${model.apiKey}` }
         });
@@ -323,16 +333,30 @@ function App() {
                 label="Use Global Prompt"
               />
               {useGlobalPrompt && (
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={4}
-                  label="Global Prompt"
-                  value={globalPrompt}
-                  onChange={handleGlobalPromptChange}
-                  variant="outlined"
-                  sx={{ mt: 2, mb: 2 }}
-                />
+                <>
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    maxRows={4}
+                    label="Global System Prompt"
+                    value={globalSystemPrompt}
+                    onChange={(e) => setGlobalSystemPrompt(e.target.value)}
+                    variant="outlined"
+                    sx={{ mt: 2, mb: 2 }}
+                  />
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={4}
+                    maxRows={8}
+                    label="Global User Prompt"
+                    value={globalUserPrompt}
+                    onChange={(e) => setGlobalUserPrompt(e.target.value)}
+                    variant="outlined"
+                    sx={{ mb: 2 }}
+                  />
+                </>
               )}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Button variant="contained" onClick={runAllPrompts} disabled={!useGlobalPrompt}>
@@ -363,235 +387,251 @@ function App() {
                       >
                         <MenuItem value={config.model}>{config.model}</MenuItem>
                         {savedModels.map((savedModel, index) => (
-                          <MenuItem key={index} value={savedModel.name}>{savedModel.name}</MenuItem>))}
-                          </Select>
-                        </FormControl>
-                        {useGlobalPrompt ? (
-                          <TextField
-                            fullWidth
-                            multiline
-                            minRows={4}
-                            maxRows={20}
-                            label="Output"
-                            value={config.prompts[0]?.output || ''}
-                            variant="outlined"
-                            InputProps={{ readOnly: true }}
-                            sx={{ mb: 2 }}
-                          />
-                        ) : (
-                          <>
-                            {config.prompts.map((prompt) => (
-                              <Box key={prompt.id} sx={{ mb: 2 }}>
-                                <TextField
-                                  fullWidth
-                                  multiline
-                                  minRows={4}
-                                  maxRows={8}
-                                  label="Enter your prompt"
-                                  value={prompt.text}
-                                  onChange={(e) => handlePromptChange(config.id, prompt.id, e.target.value)}
-                                  variant="outlined"
-                                  sx={{ mb: 2 }}
-                                />
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                                  <Button variant="contained" onClick={() => runPrompt(config.id, prompt.id)}>
-                                    Run Prompt
-                                  </Button>
-                                  <Button variant="outlined" onClick={() => openSavePromptDialogHandler(config.id, prompt.id)}>
-                                    Save Prompt
-                                  </Button>
-                                </Box>
-                                <TextField
-                                  fullWidth
-                                  multiline
-                                  minRows={4}
-                                  maxRows={20}
-                                  label="Output"
-                                  value={prompt.output}
-                                  variant="outlined"
-                                  InputProps={{ readOnly: true }}
-                                  sx={{ mb: 2 }}
-                                />
-                                <Button variant="outlined" onClick={() => handleDeletePrompt(config.id, prompt.id)} startIcon={<DeleteIcon />}>
-                                  Remove Prompt
-                                </Button>
-                              </Box>
-                            ))}
-                            <Button variant="outlined" onClick={() => handleAddPrompt(config.id)} startIcon={<AddIcon />}>
-                              Add Prompt
+                          <MenuItem key={index} value={savedModel.name}>{savedModel.name}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    {!useGlobalPrompt && (
+                      <>
+                        {config.prompts.map((prompt) => (
+                          <Box key={prompt.id} sx={{ mb: 2 }}>
+                            <TextField
+                              fullWidth
+                              multiline
+                              minRows={2}
+                              maxRows={4}
+                              label="System Prompt"
+                              value={prompt.systemPrompt}
+                              onChange={(e) => handlePromptChange(config.id, prompt.id, 'systemPrompt', e.target.value)}
+                              variant="outlined"
+                              sx={{ mb: 2 }}
+                            />
+                            <TextField
+                              fullWidth
+                              multiline
+                              minRows={4}
+                              maxRows={8}
+                              label="User Prompt"
+                              value={prompt.userPrompt}
+                              onChange={(e) => handlePromptChange(config.id, prompt.id, 'userPrompt', e.target.value)}
+                              variant="outlined"
+                              sx={{ mb: 2 }}
+                            />
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                              <Button variant="contained" onClick={() => runPrompt(config.id, prompt.id)}>
+                                Run Prompt
+                              </Button>
+                              <Button variant="outlined" onClick={() => openSavePromptDialogHandler(config.id, prompt.id)}>
+                                Save Prompt
+                              </Button>
+                            </Box>
+                            <TextField
+                              fullWidth
+                              multiline
+                              minRows={4}
+                              maxRows={20}
+                              label="Output"
+                              value={prompt.output}
+                              variant="outlined"
+                              InputProps={{ readOnly: true }}
+                              sx={{ mb: 2 }}
+                            />
+                            <Button variant="outlined" onClick={() => handleDeletePrompt(config.id, prompt.id)} startIcon={<DeleteIcon />}>
+                              Remove Prompt
                             </Button>
-                          </>
-                        )}
-                      </Paper>
-                    </Grid>
-                  ))}
+                          </Box>
+                        ))}
+                        <Button variant="outlined" onClick={() => handleAddPrompt(config.id)} startIcon={<AddIcon />}>
+                          Add Prompt
+                        </Button>
+                      </>
+                    )}
+                    {useGlobalPrompt && (
+                      <TextField
+                        fullWidth
+                        multiline
+                        minRows={4}
+                        maxRows={20}
+                        label="Output"
+                        value={config.prompts[0]?.output || ''}
+                        variant="outlined"
+                        InputProps={{ readOnly: true }}
+                        sx={{ mb: 2 }}
+                      />
+                    )}
+                  </Paper>
                 </Grid>
-                <Box sx={{ mt: 2 }}>
-                  <Button fullWidth variant="outlined" onClick={handleAddModel} startIcon={<AddIcon />}>
-                    Add Model
-                  </Button>
-                </Box>
+              ))}
+            </Grid>
+            <Box sx={{ mt: 2 }}>
+              <Button fullWidth variant="outlined" onClick={handleAddModel} startIcon={<AddIcon />}>
+                Add Model
+              </Button>
+            </Box>
+          </Box>
+        </Panel>
+        <PanelResizeHandle style={{ width: '8px', background: '#f0f0f0', cursor: 'col-resize' }} />
+        <Panel defaultSize={25} minSize={20}>
+          <Box sx={{ height: '100%', overflowY: 'auto', p: 2 }}>
+            <Paper sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" gutterBottom>Variables</Typography>
+              <List>
+                {variables.map((variable, index) => (
+                  <ListItem key={index} disablePadding sx={{ mb: 2 }}>
+                    <Box sx={{ width: '100%', position: 'relative' }}>
+                      <TextField 
+                        fullWidth
+                        size="small" 
+                        label="Name" 
+                        value={variable.name}
+                        onChange={(e) => handleVariableChange(index, 'name', e.target.value)}
+                        sx={{ mb: 1 }}
+                      />
+                      <TextField
+                        fullWidth
+                        multiline
+                        minRows={3}
+                        maxRows={6}
+                        label="Value"
+                        value={variable.value}
+                        onChange={(e) => handleVariableChange(index, 'value', e.target.value)}
+                      />
+                      <IconButton 
+                        onClick={() => handleDeleteVariable(index)}
+                        sx={{ position: 'absolute', top: 0, right: 0 }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </Box>
+                  </ListItem>
+                ))}
+              </List>
+              <Box mt={2} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Button variant="outlined" onClick={handleAddVariable} startIcon={<AddIcon />}>
+                  Add Variable
+                </Button>
+                <Button variant="outlined" onClick={openSaveVariablesDialogHandler} startIcon={<SaveIcon />}>
+                  Save Variables
+                </Button>
               </Box>
-            </Panel>
-            <PanelResizeHandle style={{ width: '8px', background: '#f0f0f0', cursor: 'col-resize' }} />
-            <Panel defaultSize={25} minSize={20}>
-              <Box sx={{ height: '100%', overflowY: 'auto', p: 2 }}>
-                <Paper sx={{ p: 2, mb: 2 }}>
-                  <Typography variant="h6" gutterBottom>Variables</Typography>
-                  <List>
-                    {variables.map((variable, index) => (
-                      <ListItem key={index} disablePadding sx={{ mb: 2 }}>
-                        <Box sx={{ width: '100%', position: 'relative' }}>
-                          <TextField 
-                            fullWidth
-                            size="small" 
-                            label="Name" 
-                            value={variable.name}
-                            onChange={(e) => handleVariableChange(index, 'name', e.target.value)}
-                            sx={{ mb: 1 }}
-                          />
-                          <TextField
-                            fullWidth
-                            multiline
-                            minRows={3}
-                            maxRows={6}
-                            label="Value"
-                            value={variable.value}
-                            onChange={(e) => handleVariableChange(index, 'value', e.target.value)}
-                          />
-                          <IconButton 
-                            onClick={() => handleDeleteVariable(index)}
-                            sx={{ position: 'absolute', top: 0, right: 0 }}
-                          >
-                            <DeleteIcon />
-                          </IconButton>
-                        </Box>
-                      </ListItem>
-                    ))}
-                  </List>
-                  <Box mt={2} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Button variant="outlined" onClick={handleAddVariable} startIcon={<AddIcon />}>
-                      Add Variable
+            </Paper>
+            <Paper sx={{ p: 2, mb: 2 }}>
+              <Typography variant="h6" gutterBottom>Saved Variables</Typography>
+              <List>
+                {savedVariables.map((savedVarSet, index) => (
+                  <ListItem key={index} disablePadding sx={{ mb: 1 }}>
+                    <Button variant="outlined" onClick={() => loadVariables(savedVarSet)} sx={{ mr: 1, flexGrow: 1 }}>
+                      {savedVarSet.name}
                     </Button>
-                    <Button variant="outlined" onClick={openSaveVariablesDialogHandler} startIcon={<SaveIcon />}>
-                      Save Variables
+                    <IconButton onClick={() => removeSavedVariables(index)}><DeleteIcon /></IconButton>
+                  </ListItem>
+                ))}
+              </List>
+            </Paper>
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="h6" gutterBottom>Model Configurations</Typography>
+              {modelConfigs.map((config) => (
+                <Box key={config.id} sx={{ mb: 2 }}>
+                  <FormControl fullWidth sx={{ mb: 1 }}>
+                    <InputLabel>Provider</InputLabel>
+                    <Select value={config.provider} label="Provider"
+                      onChange={(e) => handleModelConfigChange(config.id, 'provider', e.target.value)}>
+                      <MenuItem value="openai">OpenAI</MenuItem>
+                      <MenuItem value="anthropic">Anthropic</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <TextField fullWidth size="small" label="Model" value={config.model} sx={{ mb: 1 }}
+                    onChange={(e) => handleModelConfigChange(config.id, 'model', e.target.value)}
+                  />
+                  <TextField fullWidth size="small" label="API Key" value={config.apiKey} sx={{ mb: 1 }}
+                    onChange={(e) => handleModelConfigChange(config.id, 'apiKey', e.target.value)}
+                    type="password"
+                  />
+                  <TextField fullWidth size="small" label="Endpoint" value={config.endpoint} sx={{ mb: 1 }}
+                    onChange={(e) => handleModelConfigChange(config.id, 'endpoint', e.target.value)}
+                  />
+                  <TextField fullWidth size="small" label="Max Tokens" type="number" value={config.maxTokens} sx={{ mb: 1 }}
+                    onChange={(e) => handleModelConfigChange(config.id, 'maxTokens', parseInt(e.target.value))}
+                  />
+                  <Typography gutterBottom>Temperature: {config.temperature}</Typography>
+                  <Slider
+                    value={config.temperature}
+                    onChange={(e, newValue) => handleModelConfigChange(config.id, 'temperature', newValue)}
+                    min={0} max={1} step={0.1}
+                  />
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
+                    <Button variant="outlined" onClick={() => handleDeleteModel(config.id)} startIcon={<DeleteIcon />}>
+                      Remove
+                    </Button>
+                    <Button variant="outlined" onClick={() => openSaveModelDialogHandler(config)} startIcon={<SaveIcon />}>
+                      Save Model
                     </Button>
                   </Box>
-                </Paper>
-                <Paper sx={{ p: 2, mb: 2 }}>
-                  <Typography variant="h6" gutterBottom>Saved Variables</Typography>
-                  <List>
-                    {savedVariables.map((savedVarSet, index) => (
-                      <ListItem key={index} disablePadding sx={{ mb: 1 }}>
-                        <Button variant="outlined" onClick={() => loadVariables(savedVarSet)} sx={{ mr: 1, flexGrow: 1 }}>
-                          {savedVarSet.name}
-                        </Button>
-                        <IconButton onClick={() => removeSavedVariables(index)}><DeleteIcon /></IconButton>
-                      </ListItem>
-                    ))}
-                  </List>
-                </Paper>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6" gutterBottom>Model Configurations</Typography>
-                  {modelConfigs.map((config) => (
-                    <Box key={config.id} sx={{ mb: 2 }}>
-                      <FormControl fullWidth sx={{ mb: 1 }}>
-                        <InputLabel>Provider</InputLabel>
-                        <Select value={config.provider} label="Provider"
-                          onChange={(e) => handleModelConfigChange(config.id, 'provider', e.target.value)}>
-                          <MenuItem value="openai">OpenAI</MenuItem>
-                          <MenuItem value="anthropic">Anthropic</MenuItem>
-                        </Select>
-                      </FormControl>
-                      <TextField fullWidth size="small" label="Model" value={config.model} sx={{ mb: 1 }}
-                        onChange={(e) => handleModelConfigChange(config.id, 'model', e.target.value)}
-                      />
-                      <TextField fullWidth size="small" label="API Key" value={config.apiKey} sx={{ mb: 1 }}
-                        onChange={(e) => handleModelConfigChange(config.id, 'apiKey', e.target.value)}
-                        type="password"
-                      />
-                      <TextField fullWidth size="small" label="Endpoint" value={config.endpoint} sx={{ mb: 1 }}
-                        onChange={(e) => handleModelConfigChange(config.id, 'endpoint', e.target.value)}
-                      />
-                      <Typography gutterBottom>Temperature: {config.temperature}</Typography>
-                      <Slider
-                        value={config.temperature}
-                        onChange={(e, newValue) => handleModelConfigChange(config.id, 'temperature', newValue)}
-                        min={0} max={1} step={0.1}
-                      />
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 1 }}>
-                        <Button variant="outlined" onClick={() => handleDeleteModel(config.id)} startIcon={<DeleteIcon />}>
-                          Remove
-                        </Button>
-                        <Button variant="outlined" onClick={() => openSaveModelDialogHandler(config)} startIcon={<SaveIcon />}>
-                          Save Model
-                        </Button>
-                      </Box>
-                    </Box>
-                  ))}
-                </Paper>
-              </Box>
-            </Panel>
-          </PanelGroup>
-          <Dialog open={openSavePromptDialog} onClose={() => setOpenSavePromptDialog(false)}>
-            <DialogTitle>Save Prompt</DialogTitle>
-            <DialogContent>
-              <TextField
-                autoFocus
-                margin="dense"
-                label="Prompt Name"
-                type="text"
-                fullWidth
-                variant="standard"
-                value={promptNameToSave}
-                onChange={(e) => setPromptNameToSave(e.target.value)}
-              />
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setOpenSavePromptDialog(false)}>Cancel</Button>
-              <Button onClick={savePrompt}>Save</Button>
-            </DialogActions>
-          </Dialog>
-          <Dialog open={openSaveModelDialog} onClose={() => setOpenSaveModelDialog(false)}>
-            <DialogTitle>Save Model Configuration</DialogTitle>
-            <DialogContent>
-              <TextField
-                autoFocus
-                margin="dense"
-                label="Model Name"
-                type="text"
-                fullWidth
-                variant="standard"
-                value={modelNameToSave}
-                onChange={(e) => setModelNameToSave(e.target.value)}
-              />
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setOpenSaveModelDialog(false)}>Cancel</Button>
-              <Button onClick={saveModel}>Save</Button>
-            </DialogActions>
-          </Dialog>
-          <Dialog open={openSaveVariablesDialog} onClose={() => setOpenSaveVariablesDialog(false)}>
-            <DialogTitle>Save Variables</DialogTitle>
-            <DialogContent>
-              <TextField
-                autoFocus
-                margin="dense"
-                label="Variables Set Name"
-                type="text"
-                fullWidth
-                variant="standard"
-                value={variablesNameToSave}
-                onChange={(e) => setVariablesNameToSave(e.target.value)}
-              />
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setOpenSaveVariablesDialog(false)}>Cancel</Button>
-              <Button onClick={saveVariables}>Save</Button>
-            </DialogActions>
-          </Dialog>
-        </Box>
-      );
-    }
-    
-    export default App;
+                </Box>
+              ))}
+            </Paper>
+          </Box>
+        </Panel>
+      </PanelGroup>
+      <Dialog open={openSavePromptDialog} onClose={() => setOpenSavePromptDialog(false)}>
+        <DialogTitle>Save Prompt</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Prompt Name"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={promptNameToSave}
+            onChange={(e) => setPromptNameToSave(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenSavePromptDialog(false)}>Cancel</Button>
+          <Button onClick={savePrompt}>Save</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={openSaveModelDialog} onClose={() => setOpenSaveModelDialog(false)}>
+        <DialogTitle>Save Model Configuration</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Model Name"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={modelNameToSave}
+            onChange={(e) => setModelNameToSave(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenSaveModelDialog(false)}>Cancel</Button>
+          <Button onClick={saveModel}>Save</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={openSaveVariablesDialog} onClose={() => setOpenSaveVariablesDialog(false)}>
+        <DialogTitle>Save Variables</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Variables Set Name"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={variablesNameToSave}
+            onChange={(e) => setVariablesNameToSave(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenSaveVariablesDialog(false)}>Cancel</Button>
+          <Button onClick={saveVariables}>Save</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}
+
+export default App;
