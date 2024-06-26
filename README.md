@@ -4,6 +4,8 @@
 
 The Prompt Engineering Tool is a web-based application designed to help users experiment with and optimize prompts for various large language models (LLMs). It allows users to:
 
+![image](https://github.com/teknium1/Prompt-Engineering-Toolkit/assets/127238744/9611af16-a950-41e6-91d2-22f077e6496d)
+
 - Test prompts across multiple LLM providers simultaneously
 - Save and load prompt templates
 - Manage variables for dynamic prompt generation
